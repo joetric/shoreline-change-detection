@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: sandbox.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: sandbox.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var bufferMask = ee.Image("users/jrt/final/bufferMask"),
+    noaaMask = ee.Image("users/jrt/final/noaaMask"),
+    bufferedShoreline = ee.FeatureCollection("users/jrt/final/bufferedShoreline");
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+/**
+* Final Project: sandbox module
+* Joseph R. Tricarico
+* Rutgers School of Environmental and Biological Sciences
+* 573:462 Advanced Geomatics
+* Dr. Richard G. Lathrop
+* May 10, 2021
+* 
+* @fileoverview A place to visualize/experiment with saved assets
+*               This is also where the analysis samples are generated.
+* 
+**/
+var vis = require('users/jrt/gee:final/vis.js');
+
+// import assets not in imports section
+var SUFFIX = '_0509_0135'; //MMdd_hhmm
+var classified1 = ee.Image('users/jrt/classified1' + SUFFIX);
+var classified2 = ee.Image('users/jrt/classified2' + SUFFIX);
+var changeSup = ee.Image('users/jrt/changeSup' + SUFFIX);
+// var changeSupUnmasked = ee.Image('users/jrt/changeSupUnmasked' + SUFFIX);
+
+// show assets so we know what we're working with
+Map.addLayer(noaaMask, {palette: 'blue'}, 'noaaMask', false);
+Map.addLayer(bufferMask, {palette: 'yellow'}, 'bufferMask', false);
+Map.addLayer(classified1, vis.params.binary, 'classified1', false);
+Map.addLayer(classified2, vis.params.binary, 'classified2', false);
+Map.addLayer(changeSup, vis.params.s2ShoreChange, 'changeSup', false);
+// Map.addLayer(changeSupUmasked, vis.params.s2ShoreChange, 'changeSupUnmasked');
+Map.centerObject(changeSup);
+
+// make animated GIF
+var years = ee.ImageCollection([classified1, classified2]);
+years.getVideoThumbURL({
+    min: 0,
+    max: 1,
+    dimensions: 1080,
+    framesPerSecond: 1,
+  },
+  function(url) {print("Animated GIF:", url);});
+
+// make histogram chart
+
+var changeSupUnmasked = changeSup.unmask();
+Map.addLayer(changeSupUnmasked, {}, 'changeSupUnmasked', false);
+
+// var changeSupSample = changeSupUnmasked.sample({
+//   dropNulls: false, // don't get rid of the unchanged places!
+//   numPixels: 10e5, // should be enough
+//   region: bufferedShoreline,
+
+// });
+// print('changeSupSample', changeSupSample);
+// var histo = ui.Chart.feature.histogram(
+//   changeSupSample, 'classification', 3, 1);
+// print('Sup. Classification Sample Histogram', histo);
+
+var changeSupSSampleNoStyle = changeSupUnmasked.stratifiedSample({
+  numPoints: 30,
+  classBand: 'classification',
+  geometries: true,
+  region: bufferedShoreline,
+});
+
+Export.table.toAsset(changeSupSSampleNoStyle, "changeSupSSampleNoStyle");
+
+var palette = ee.List(['red', 'gray', 'green']);
+changeSupSSample = changeSupSSampleNoStyle.map(function(f){
+  var index = ee.Number(f.get('classification')).add(1);
+  var color = palette.get(index);
+  var style = {color: color};
+  f = f.set('style', style);
+  return f;
+});
+
+var changeSupSSampleImg = changeSupSSample.style({styleProperty: "style"});
+
+Export.table.toAsset(changeSupSSample, "changeSupSSampleNoStyle");
+Export.image.toAsset(changeSupSSampleImg, "changeSupSSampleImg");
+
+print('changeSupSSample3', changeSupSSample);
+Map.addLayer(changeSupSSampleImg, {}, 'changeSupSSampleImg', false);
+
+
+// var histo = ui.Chart.feature.histogram(
+//   changeSupSSample, 'classification', 3, 1);
+// print('Sup. Classification Stratified Sample Histogram', histo);
+// Map.addLayer(changeSupSSample.draw(), {color: 'red'}, 'changeSupSSample');</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Global</h3><ul><li><a href="global.html#addNaipIndexBands">addNaipIndexBands</a></li><li><a href="global.html#bufferShoreline">bufferShoreline</a></li><li><a href="global.html#data">data</a></li><li><a href="global.html#getCovariateComposite">getCovariateComposite</a></li><li><a href="global.html#getCovariates">getCovariates</a></li><li><a href="global.html#getEntireRangeFilter">getEntireRangeFilter</a></li><li><a href="global.html#getPeriodRangeFilter">getPeriodRangeFilter</a></li><li><a href="global.html#indexFunctions">indexFunctions</a></li><li><a href="global.html#logging">logging</a></li><li><a href="global.html#makeBufferMask">makeBufferMask</a></li><li><a href="global.html#makeImgExpTasks">makeImgExpTasks</a></li><li><a href="global.html#maskS2Clouds">maskS2Clouds</a></li><li><a href="global.html#MAX_ERROR">MAX_ERROR</a></li><li><a href="global.html#params">params</a></li><li><a href="global.html#selfMaskNonZero">selfMaskNonZero</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 3.6.6</a> on Tue May 11 2021 00:57:03 GMT-0400 (Eastern Daylight Time)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

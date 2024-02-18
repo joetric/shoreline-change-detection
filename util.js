@@ -1,0 +1,204 @@
+/**
+* Final Project: util module
+* Joseph R. Tricarico
+* Rutgers School of Environmental and Biological Sciences
+* 573:462 Advanced Geomatics
+* Dr. Richard G. Lathrop
+* May 10, 2021
+*
+* @fileoverview Utilites for New Jersey Shoreline Change Analysis
+*/
+var settings = require('users/jrt/gee:final/settings.js');  // not used
+
+/**
+ * Dictionary of index functions. Adapted from
+ * https://github.com/nick-murray/global-tidalFlat
+ * 
+ * Murray N. J., Phinn S. R., DeWitt M., Ferrari R., Johnston R., Lyons M. B.,
+ * Clinton N., Thau D. & Fuller R. A. (2019) The global distribution and trajectory of tidal flats.
+ * Nature. 565:222-225. http://dx.doi.org/10.1038/s41586-018-0805-8 
+ */
+exports.indexFunctions = {
+  /**
+   * Returns single-band image with specified Normalized Difference Water Index
+   * Defaults to McFeeters NDWI using green & near-infrared bands
+   * @param {ee.Image} image              input image with source bands
+   * @param {string}   [author=mcfeeters] author of NDWI
+   * 
+   * [Wikpedia page](https://en.wikipedia.org/wiki/Normalized_difference_water_index)
+   * [Gao (1996)](http://ceeserver.cee.cornell.edu/wdp2/cee6150/Readings/Gao_1996_RSE_58_257-266_NDWI.pdf)
+   * [McFeeters (1996)](https://doi.org/10.1080/01431169608948714)
+   */
+  applyNDWI: function(image, author) {
+    author = (typeof author !== 'undefined') ? author.toLowerCase() : 'mcfeeters';
+    var bands = {'gao': ['nir', 'swir1'], 'mcfeeters': ['green', 'nir'],};
+    var ndwi = image.normalizedDifference(bands[author]);
+    return ndwi.select([0], ['ndwi']); // rename band, otherwise they will all be "nd[_𝑛]"
+  },
+  applyMNDWI: function(image) {
+    // apply MNDWI to an image
+    var mndwi = image.normalizedDifference(['green', 'swir1']);
+    return mndwi.select([0], ['mndwi']);
+  },
+  applyAWEI: function(image) {
+    // apply Automated Water Extraction Index (Feyisat et al., 2014) to an image
+    var awei = image.expression("4*(b('green')-b('swir1'))-(0.25*b('nir')+2.75*b('swir2'))");// AWEIₙₛₕ
+    return awei.select([0], ['awei']);
+  },
+  applyNDVI: function(image) {
+    // apply Normalized Difference Vegetation Index to an image
+    var ndvi = image.normalizedDifference(['nir', 'red']);
+    return ndvi.select([0], ['ndvi']);
+  },
+  applySWI: function(image) {
+    // apply Sentinel Water Index (Jiang et. al, 2020) to an image
+    var swi = image.normalizedDifference(['vre5', 'swir1']); // vre = band 5 on sentinel 2
+    return swi.select([0], ['swi']);
+  },
+  // applyFMask: function(image) { // just for Landsat
+  //   // Mask out SHADOW, SNOW, and CLOUD classes. SR data.
+  //   return image
+  //     .updateMask(image.select('cfmask')
+  //     .lt(2)); 
+  // },
+};
+
+// adds a pair of layers to map -- one for each year being compared
+// exports.addTwoLayers = function(objPrefix, vp, name, shown){
+//   vp = (typeof vp !== 'undefined') ?  vp : {};
+//   name = (typeof name !== 'undefined') ?  name : 'Layer Unnamed';
+//   shown = (typeof shown !== 'undefined') ?  shown : true;
+//   var i, iStr, newName;
+//   for(i = 0; i < 2; i++){
+//     iStr = i.toString();
+//     newName = settings['YEAR_'+ iStr] + ' ' + name;
+//     Map.addLayer(data[objPrefix + iStr], vp, newName, shown);
+//   }
+// };
+
+// adapted: ://medium.com/google-earth/otsus-method-for-image-segmentation-f5c48f405e
+exports.getHistogram = function(data, band, geom) {
+  return data.select(band).reduceRegion({
+    reducer: ee.Reducer.histogram(255, 1e-2),
+    geometry: geom,
+    // maxPixels: 1e4,
+    bestEffort: true,
+    scale: 1,
+  });
+};
+
+// adapted: ://medium.com/google-earth/otsus-method-for-image-segmentation-f5c48f405e
+exports.getOptimalThreshold = function(dict, showChart){
+  showChart = (typeof showChart !== 'undefined') ?  showChart : true;
+  dict = ee.Dictionary(ee.Dictionary(dict).get('ndwi'));
+  var counts = ee.Array(dict.get('histogram'));
+  var means = ee.Array(dict.get('bucketMeans'));
+  var size = means.length().get([0]);
+  var total = counts.reduce(ee.Reducer.sum(), [0]).get([0]);
+  var sum = means.multiply(counts).reduce(ee.Reducer.sum(), [0]).get([0]);
+  var mean = sum.divide(total);
+  var indices = ee.List.sequence(1, size);
+  // Compute between sum of squares, where each mean partitions the data.
+  var bss = indices.map(function(i) {
+    var aCounts = counts.slice(0, 0, i);
+    var aCount = aCounts.reduce(ee.Reducer.sum(), [0]).get([0]);
+    var aMeans = means.slice(0, 0, i);
+    var aMean = aMeans.multiply(aCounts)
+        .reduce(ee.Reducer.sum(), [0]).get([0])
+        .divide(aCount);
+    var bCount = total.subtract(aCount);
+    var bMean = sum.subtract(aCount.multiply(aMean)).divide(bCount);
+    return aCount.multiply(aMean.subtract(mean).pow(2)).add(
+           bCount.multiply(bMean.subtract(mean).pow(2)));
+  });
+  if(showChart){
+    print(ui.Chart.array.values(ee.Array(bss), 0, means));
+  }
+  // Return the mean value corresponding to the maximum BSS.
+  return means.sort(bss).get([-1]);
+};
+
+/**
+ * Returns date filter for the indicated time step (year)
+ * 
+ * @param {integer|string} yearIndex - 1 or 2
+ * @returns {ee.Filter}
+ */
+exports.getPeriodRangeFilter = function(yearIndex){
+  var yyyy = settings['YEAR_' + yearIndex]; // set 4-digit year
+  return ee.Filter.date(yyyy + '-01-01', yyyy + '-12-31');
+};
+
+/**
+ * Returns date filter for the range including all time steps but nothing in between
+ * 
+ * @returns {ee.Filter}
+ */
+exports.getEntireRangeFilter = function(){
+  return ee.Filter.or(exports.getPeriodRangeFilter(1), exports.getPeriodRangeFilter(2));
+};
+
+/**
+ * Create tasks to export an image to the assets library / Google Drive
+ * 
+ * Exports will be "clipped" to settings.AOI.
+ * Tasks do not run automatically. They must be run from the Tasks panel.
+ * 
+ * @param {ee.Image} image - Input image
+ * @param {string}   name  - Name for default filenames / task descriptions
+ * @returns {void}
+ */
+exports.makeImgExpTasks = function(image, name){
+  var makeTasks = function(suffix){
+    var ExportArgs = function (){
+      this.image = image;
+      this.region = settings.AOI;
+      // this.region = image.get('system:footprint');
+      this.scale = settings.EXPORT_RESULTS_SCALE_M;
+      this.maxPixels = settings.EXPORT_MAX_PIXELS;
+    };
+    name = name + suffix; 
+    var assetArgs = new ExportArgs();
+    assetArgs.assetId = name;
+    assetArgs.description = name + '_to_asset';
+    var driveArgs = new ExportArgs();
+    driveArgs.description = name + '_to_Drive';
+    driveArgs.fileNamePrefix = name;
+    driveArgs.folder = 'advgeo';
+    Export.image.toAsset(assetArgs);
+    Export.image.toDrive(driveArgs);
+  };
+  var date = new Date();
+  var suffix = ee.Date(date).format("_MMdd_HHmm", 'America/New_York').evaluate(makeTasks);
+};
+
+/**
+ * adapted from
+ * https://code.earthengine.google.com/?scriptPath=Examples%3ADatasets%2FCOPERNICUS_S2_CLOUD_PROBABILITY
+ * 
+ * @param              {ee.Image} img - image output from S2/S2 cloud probability join
+ * @param maxCloudProb {number}   [maxCloudProb] - max cloud probability as percent
+ * @returns {ee.Image} Image masked to otensibly not cloudy pixels
+ */
+exports.maskS2Clouds = function(img, maxCloudProb) {
+  var maxCloudProbDefault;
+  try {
+    maxCloudProbDefault = settings.MAX_CLOUD_PROBABILITY; // default from settings
+  } catch(exception_var) {
+    maxCloudProbDefault = 65; // the "default" default
+  }
+  maxCloudProb = (typeof maxCloudProb !== 'undefined') ? maxCloudProb : maxCloudProbDefault;
+  var clouds = ee.Image(img.get('cloud_mask')).select('probability');
+  var isNotCloud = clouds.lt(settings.MAX_CLOUD_PROBABILITY);
+  return img.updateMask(isNotCloud);
+};
+
+/**
+ * Return image masked to nonzero pixels
+ * 
+ * @param {ee.Image} image
+ * @returns {ee.Image}
+ */
+exports.selfMaskNonZero = function(image){
+  return image.updateMask(image.neq(0));
+};
