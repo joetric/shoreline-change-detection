@@ -1,2 +1,2 @@
 # shoreline-change-detection
- Shoreline change detection using Google Earth Engine
+A multi-classifier for detecting shoreline change in Google Earth Engine
